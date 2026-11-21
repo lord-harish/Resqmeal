@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'profileImage', 'phone',
+          'createdAt', 'updatedAt', 'rating', 'totalReviews',
+          'completedDonations', 'totalMealsDonated', 'totalMealsReceived', 'badges'
+        ])
+        && request.resource.data.uid == userId
+        && request.resource.data.rating == 0
+        && request.resource.data.totalReviews == 0
+        && request.resource.data.completedDonations == 0
+        && request.resource.data.totalMealsDonated == 0
+        && request.resource.data.totalMealsReceived == 0
+        && request.resource.data.badges == [];
+
+      allow update: if isOwner(userId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['name', 'phone', 'profileImage', 'updatedAt'])
+        && request.resource.data.uid == resource.data.uid;
+
+      allow delete: if false;
+    }
+
+    match /donations/{donationId} {
+      allow read: if signedIn()
+        && (resource.data.status == 'AVAILABLE' || resource.data.donorId == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.donorId == request.auth.uid
+        && request.resource.data.keys().hasOnly([
+          'id', 'donorId', 'donorName', 'donorRating', 'title', 'category', 'description',
+          'images', 'originalQuantity', 'availableQuantity', 'unit', 'cookedAt', 'expiresAt',
+          'approxLocation', 'pickupWindow', 'packaging', 'allergens', 'status', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.id == donationId
+        && request.resource.data.status == 'AVAILABLE'
+        && request.resource.data.originalQuantity is int
+        && request.resource.data.originalQuantity > 0
+        && request.resource.data.originalQuantity <= 10000
+        && request.resource.data.availableQuantity == request.resource.data.originalQuantity
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt > request.resource.data.cookedAt
+        && request.resource.data.pickupWindow.from < request.resource.data.pickupWindow.until
+        && request.resource.data.pickupWindow.until <= request.resource.data.expiresAt
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.description.size() <= 500
+        && request.resource.data.images.size() <= 5
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if signedIn()
+        && resource.data.donorId == request.auth.uid
+        && resource.data.status == 'AVAILABLE'
+        && request.resource.data.status == 'CANCELLED'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if false;
+
+      match /private/location {
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/donations/$(donationId)).data.donorId == request.auth.uid;
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/donations/$(donationId)).data.donorId == request.auth.uid
+          && request.resource.data.keys().hasOnly(['displayAddress', 'area', 'latitude', 'longitude']);
+        allow update, delete: if false;
+      }
+    }
+
+    match /stats/{docId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
